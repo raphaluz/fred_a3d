@@ -1,6 +1,19 @@
 const { SlashCommandBuilder } = require("@discordjs/builders");
 const { EmbedBuilder, PermissionFlagsBits } = require("discord.js");
 const { QueryType } = require("discord-player");
+const {
+  getPlaylistThumbnail,
+  getTrackThumbnail,
+} = require("../utils/thumbnails");
+
+function isUrl(query) {
+  try {
+    new URL(query);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -10,7 +23,14 @@ module.exports = {
       option
         .setName("oqbuscas")
         .setDescription("params for song or playlist")
-        .setRequired(true),
+        .setRequired(false),
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("posicao")
+        .setDescription("Numero da musica na fila para pular")
+        .setMinValue(1)
+        .setRequired(false),
     ),
   run: async ({ client, interaction }) => {
     try {
@@ -37,7 +57,58 @@ module.exports = {
         );
       }
 
+      const query = interaction.options.getString("oqbuscas")?.trim();
+      const position = interaction.options.getInteger("posicao");
+
+      if (!query && !position) {
+        return interaction.editReply(
+          "Informe uma musica para buscar ou uma posicao da fila para pular.",
+        );
+      }
+
       let queue = client.player.nodes.get(interaction.guild.id);
+
+      if (position) {
+        if (!queue || !queue.currentTrack) {
+          return interaction.editReply("Sem musicas na sua fila para pular.");
+        }
+
+        const tracks = queue.tracks.data;
+
+        if (!tracks.length) {
+          return interaction.editReply("Sem musicas na sua fila para pular.");
+        }
+
+        if (position > tracks.length) {
+          return interaction.editReply(
+            `Posicao invalida. A fila tem apenas ${tracks.length} musicas.`,
+          );
+        }
+
+        const botChannel = interaction.guild.members.me.voice.channel;
+        if (botChannel && voiceChannel.id !== botChannel.id) {
+          return interaction.editReply(
+            "Voce precisa estar no mesmo canal de voz que eu para pular musicas!",
+          );
+        }
+
+        const song = tracks[position - 1];
+        const thumbnail = await getTrackThumbnail(song);
+        const jumped = queue.node.jump(position - 1);
+
+        if (!jumped) {
+          return interaction.editReply("Nao consegui pular para essa musica.");
+        }
+
+        const embed = new EmbedBuilder()
+          .setDescription(`Pulando para **${song.title}**`)
+          .setFooter({ text: `Posicao: ${position}` });
+        if (thumbnail) embed.setThumbnail(thumbnail);
+
+        return interaction.editReply({
+          embeds: [embed],
+        });
+      }
 
       if (!queue) {
         queue = client.player.nodes.create(interaction.guild, {
@@ -58,11 +129,13 @@ module.exports = {
 
       let embed = new EmbedBuilder();
 
-      let url = interaction.options.getString("oqbuscas");
+      const searchEngine = isUrl(query)
+        ? QueryType.AUTO
+        : QueryType.YOUTUBE_SEARCH;
 
-      const result = await client.player.search(url, {
+      const result = await client.player.search(query, {
         requestedBy: interaction.user,
-        searchEngine: QueryType.AUTO,
+        searchEngine,
       });
 
       if (!result.hasTracks()) return interaction.editReply("Nada encontrado");
@@ -70,21 +143,23 @@ module.exports = {
       if (result.playlist) {
         await queue.addTrack(result.playlist.tracks);
         const playlist = result.playlist;
+        const thumbnail = await getPlaylistThumbnail(playlist);
         embed
           .setDescription(
             `**${playlist.title}**\nEssa lista de pedrada foi adicionada a sua fila`,
           )
-          .setThumbnail(playlist.thumbnail)
           .setFooter({ text: `Musicas: ${playlist.tracks.length}` });
+        if (thumbnail) embed.setThumbnail(thumbnail);
       } else {
         await queue.addTrack(result.tracks[0]);
         const song = result.tracks[0];
+        const thumbnail = await getTrackThumbnail(song, result.playlist);
         embed
           .setDescription(
             `**${song.title}**\nEssa pedrada foi adicionada a sua fila`,
           )
-          .setThumbnail(song.thumbnail)
           .setFooter({ text: `Duração: ${song.duration}` });
+        if (thumbnail) embed.setThumbnail(thumbnail);
       }
 
       if (!queue.isPlaying()) await queue.node.play();

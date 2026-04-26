@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require("@discordjs/builders");
 const { EmbedBuilder } = require("discord.js");
 const { useQueue } = require("discord-player");
+const { getTrackThumbnail } = require("../utils/thumbnails");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -37,6 +38,9 @@ module.exports = {
           .join("\n") || "Nenhuma musica na fila.";
 
       const currentSong = queue.currentTrack;
+      const thumbnail = currentSong
+        ? await getTrackThumbnail(currentSong)
+        : null;
 
       await interaction.editReply({
         embeds: [
@@ -51,7 +55,7 @@ module.exports = {
             .setFooter({
               text: `Página ${page + 1} de ${totalPages}`,
             })
-            .setThumbnail(currentSong.thumbnail),
+            .setThumbnail(thumbnail || currentSong.thumbnail),
         ],
       });
     } catch (error) {

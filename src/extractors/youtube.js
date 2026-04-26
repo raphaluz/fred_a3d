@@ -1,5 +1,11 @@
 const { BaseExtractor, QueryType, Track, Util } = require("discord-player");
+const { spawn } = require("child_process");
 const playdl = require("play-dl");
+
+if (!process.env.YTDL_NO_UPDATE) {
+  process.env.YTDL_NO_UPDATE = "1";
+}
+
 const ytdl = require("@distube/ytdl-core");
 const youtubeDl = require("youtube-dl-exec");
 
@@ -77,23 +83,27 @@ function createYtDlpStream(url) {
     addHeader.push(`cookie:${cookie}`);
   }
 
-  const subprocess = youtubeDl.exec(
+  const args = [
     url,
-    {
-      output: "-",
-      format: "140/251/bestaudio/best",
-      noPlaylist: true,
-      quiet: true,
-      noWarnings: true,
-      addHeader,
-    },
-    {
-      windowsHide: true,
-    },
-  );
+    "--output",
+    "-",
+    "--format",
+    "140/251/bestaudio/best",
+    "--no-playlist",
+    "--quiet",
+    "--no-warnings",
+  ];
+
+  addHeader.forEach((header) => {
+    args.push("--add-header", header);
+  });
+
+  const subprocess = spawn(youtubeDl.constants.YOUTUBE_DL_PATH, args, {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   subprocess.stderr?.resume();
-  subprocess.catch(() => {});
 
   subprocess.stdout.once("close", () => {
     if (!subprocess.killed) subprocess.kill();
@@ -103,6 +113,53 @@ function createYtDlpStream(url) {
   });
 
   return subprocess.stdout;
+}
+
+async function searchWithYtDlp(query, limit = 5) {
+  const info = await getYtDlpJson(`ytsearch${limit}:${query}`, [
+    "--dump-single-json",
+    "--skip-download",
+    "--quiet",
+    "--no-warnings",
+  ]);
+
+  return Array.isArray(info.entries) ? info.entries.filter(Boolean) : [];
+}
+
+function getYtDlpJson(target, args) {
+  return new Promise((resolve, reject) => {
+    const subprocess = spawn(
+      youtubeDl.constants.YOUTUBE_DL_PATH,
+      [target, ...args],
+      {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    subprocess.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    subprocess.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    subprocess.once("error", reject);
+    subprocess.once("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr || `yt-dlp exited with code ${code}`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 }
 
 class YouTubeExtractor extends BaseExtractor {
@@ -144,16 +201,24 @@ class YouTubeExtractor extends BaseExtractor {
       ]);
     }
 
-    const results = await playdl.search(query, {
-      source: { youtube: "video" },
-      limit: 5,
-    });
+    let results = [];
+
+    try {
+      results = await playdl.search(query, {
+        source: { youtube: "video" },
+        limit: 5,
+      });
+    } catch (error) {
+      this.debug(`play-dl search failed, falling back to yt-dlp: ${error}`);
+    }
+
+    if (!results.length) {
+      results = await searchWithYtDlp(query, 5);
+    }
 
     return this.createResponse(
       null,
-      results.map((video) =>
-        this.createTrackFromPlayDl(video, context.requestedBy),
-      ),
+      results.map((video) => this.createTrack(video, context.requestedBy)),
     );
   }
 
@@ -267,6 +332,32 @@ class YouTubeExtractor extends BaseExtractor {
 
     track.extractor = this;
     return track;
+  }
+
+  createTrackFromYtDlp(video, requestedBy) {
+    const track = new Track(this.context.player, {
+      title: video.title || "Unknown YouTube video",
+      author: video.uploader || video.channel || "YouTube",
+      url: video.webpage_url || video.original_url || video.url,
+      thumbnail: video.thumbnail || "",
+      duration: formatDuration(video.duration),
+      views: Number(video.view_count) || 0,
+      requestedBy,
+      source: "youtube",
+      queryType: QueryType.YOUTUBE_VIDEO,
+      raw: video,
+    });
+
+    track.extractor = this;
+    return track;
+  }
+
+  createTrack(video, requestedBy) {
+    if (video.webpage_url || video.original_url || video.view_count) {
+      return this.createTrackFromYtDlp(video, requestedBy);
+    }
+
+    return this.createTrackFromPlayDl(video, requestedBy);
   }
 }
 
