@@ -81,7 +81,7 @@ function createYtDlpStream(url) {
     url,
     {
       output: "-",
-      format: "251/140/bestaudio/best",
+      format: "140/251/bestaudio/best",
       noPlaylist: true,
       quiet: true,
       noWarnings: true,

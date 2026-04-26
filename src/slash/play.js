@@ -45,7 +45,7 @@ module.exports = {
             channel: interaction.channel,
           },
           selfDeaf: true,
-          volume: 100,
+          volume: 60,
           leaveOnEmpty: true,
           leaveOnEmptyCooldown: 300000,
           leaveOnEnd: true,
