@@ -5,5 +5,7 @@ services:
       - NODE_ENV=production
       - TOKEN=${TOKEN}
       - CLIENT_ID=${CLIENT_ID}
+      - YOUTUBE_COOKIE=${YOUTUBE_COOKIE:-}
+      - YOUTUBE_COOKIE_JSON=${YOUTUBE_COOKIE_JSON:-}
     restart: unless-stopped
     command: ["node", "--trace-warnings", "src/index.js"]

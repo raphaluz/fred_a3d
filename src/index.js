@@ -1,8 +1,11 @@
+require("dotenv").config();
 const Discord = require("discord.js");
 const { GatewayIntentBits } = require("discord.js");
 const { REST } = require("@discordjs/rest");
-const { Routes } = require("discord-api-types/v9");
+const { Routes } = require("discord-api-types/v10");
 const { Player } = require("discord-player");
+const { DefaultExtractors } = require("@discord-player/extractor");
+const YouTubeExtractor = require("./extractors/youtube");
 const fs = require("fs");
 const path = require("path");
 
@@ -25,11 +28,10 @@ const client = new Discord.Client({
 });
 
 client.slashcommands = new Discord.Collection();
+
 client.player = new Player(client, {
-  ytdlOptions: {
-    quality: "highestaudio",
-    highWaterMark: 1 << 25,
-  },
+  skipFFmpeg: false,
+  connectionTimeout: 60000,
 });
 
 const slashFiles = fs
@@ -58,15 +60,23 @@ async function deployCommands(guildId) {
   }
 }
 
-// Event handler for when the bot joins a new server
 client.on("guildCreate", async (guild) => {
   console.log(`Joined new guild: ${guild.name} (${guild.id})`);
   await deployCommands(guild.id);
 });
 
-// Event handler for when the bot is ready
 client.on("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  try {
+    for (const extractor of DefaultExtractors) {
+      await client.player.extractors.register(extractor, {});
+    }
+    await client.player.extractors.register(YouTubeExtractor, {});
+    console.log("✅ Extractors loaded successfully");
+  } catch (error) {
+    console.error("❌ Failed to load extractors:", error);
+  }
 
   console.log("Deploying commands to all existing guilds...");
   const guilds = client.guilds.cache;
@@ -76,38 +86,43 @@ client.on("ready", async () => {
   }
 });
 
-// Handle slash command interactions
-client.on("interactionCreate", (interaction) => {
-  async function handleCommand() {
-    if (!interaction.isCommand()) return;
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isCommand()) return;
 
-    const slashcmd = client.slashcommands.get(interaction.commandName);
-    if (!slashcmd) {
-      return interaction.reply("Not a valid slash command");
-    }
-
-    await interaction.deferReply();
-    await slashcmd.run({ client, interaction });
+  const slashcmd = client.slashcommands.get(interaction.commandName);
+  if (!slashcmd) {
+    return interaction.reply("Not a valid slash command");
   }
-  handleCommand();
+
+  try {
+    await interaction.deferReply();
+    await client.player.context.provide({ guild: interaction.guild }, () =>
+      slashcmd.run({ client, interaction }),
+    );
+  } catch (error) {
+    console.error(`Error executing ${interaction.commandName}:`, error);
+    const errorMessage = `Ocorreu um erro ao executar o comando: ${error.message}`;
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(errorMessage);
+    } else {
+      await interaction.reply({ content: errorMessage, ephemeral: true });
+    }
+  }
 });
 
-// Handle bot statuses
-client.player.on("error", (queue, error) => {
+client.player.events.on("error", (_queue, error) => {
   console.error(`Player error: ${error.message}`);
-  queue.metadata.channel.send(`An error occurred: ${error.message}`);
+  console.error("Error stack:", error.stack);
+});
+
+client.player.events.on("playerError", (queue, error) => {
+  console.error(`Player error in queue ${queue.guild.name}:`, error);
+  console.error("Error stack:", error.stack);
 });
 
 client.on("error", (error) => {
   console.error("Discord client error:", error);
-});
-
-client.on("disconnect", () => {
-  console.log("Bot disconnected! Attempting to reconnect...");
-});
-
-client.on("reconnecting", () => {
-  console.log("Bot reconnecting...");
 });
 
 client.login(TOKEN).catch((error) => {

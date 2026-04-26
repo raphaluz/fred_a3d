@@ -6,13 +6,33 @@ module.exports = {
     .setName("shuffle")
     .setDescription("Embaralha a fila."),
   run: async ({ interaction }) => {
-    const queue = useQueue(interaction.guildId);
+    try {
+      const queue = useQueue(interaction.guildId);
 
-    if (!queue) return await interaction.editReply("No pedradas na fila :(");
+      if (!queue)
+        return await interaction.editReply("Sem músicas na fila :(");
 
-    queue.tracks.shuffle();
-    await interaction.editReply(
-      `A fila de ${queue.size} musicas foi embaralhada!`
-    );
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      if (!member.voice.channel)
+        return interaction.editReply(
+          "Você precisa estar em um canal de voz para usar esse comando!"
+        );
+
+      const botChannel = interaction.guild.members.me.voice.channel;
+      if (botChannel && member.voice.channel.id !== botChannel.id)
+        return interaction.editReply(
+          "Você precisa estar no mesmo canal de voz que eu!"
+        );
+
+      queue.tracks.shuffle();
+      await interaction.editReply(
+        `A fila de ${queue.size} musicas foi embaralhada!`
+      );
+    } catch (error) {
+      console.error("Error in shuffle command:", error);
+      return interaction.editReply(
+        `Ocorreu um erro ao embaralhar a fila: ${error.message}`
+      );
+    }
   },
 };
